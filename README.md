@@ -82,6 +82,25 @@ const { routineId } = await client.createRoutine({
 });
 ```
 
+## Try it — interactive demo
+
+An interactive CLI that exercises every method against the live API:
+
+```bash
+# 1. Get a refresh token from a capture (see CAPTURE.md)
+node capture/extract-token.mjs
+# 2. Make it available, either:
+export HEVY_REFRESH_TOKEN="<refresh_token>"
+#    or write examples/.hevy-token.json: { "refreshToken": "<refresh_token>" }
+# 3. Run the demo
+npm run example
+```
+
+You get a menu to read your account, workouts, routines, etc., search routines,
+and (opt-in, guarded) create/delete exercises and routines. The rotating refresh
+token is persisted back to `examples/.hevy-token.json` so repeated runs keep
+working. Option **15** runs all read-only checks in one go.
+
 ## Implemented endpoints
 
 | Method | Description | Endpoint |

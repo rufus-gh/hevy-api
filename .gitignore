@@ -1,5 +1,7 @@
 node_modules/
 dist/
 capture/flows/
+examples/.hevy-token.json
+.env
 *.log
 .DS_Store
