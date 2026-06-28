@@ -29,11 +29,16 @@ const PORT = Number(process.env.PORT || 5173);
  * accessToken lets you test reads without rotating — and logging out — the app.
  */
 function loadAuth() {
-  if (existsSync(TOKEN_FILE)) {
-    const t = JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
-    if (t.refreshToken || t.accessToken) return t;
-  }
+  // Env var wins, so exporting a fresh token overrides any stale persisted file.
   if (process.env.HEVY_REFRESH_TOKEN) return { refreshToken: process.env.HEVY_REFRESH_TOKEN };
+  if (existsSync(TOKEN_FILE)) {
+    try {
+      const t = JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
+      if (t.refreshToken || t.accessToken) return t;
+    } catch (e) {
+      console.error(`Failed to read ${TOKEN_FILE}: ${e.message}`);
+    }
+  }
   console.error(
     "No token found.\n" +
       "Set HEVY_REFRESH_TOKEN, or write examples/.hevy-token.json:\n" +
@@ -82,20 +87,25 @@ const handlers = {
       muscle_group: a.muscle_group || "biceps",
       equipment_category: a.equipment_category || "barbell",
     }),
-  createRoutine: (a) =>
-    client.createRoutine({
+  createRoutine: (a) => {
+    // Nullish-coalesce so an explicit 0 weight/reps isn't replaced by the default.
+    const num = (v, d) => (v === undefined || v === null || v === "" ? d : Number(v));
+    const weight_kg = num(a.weight_kg, 20);
+    const reps = num(a.reps, 10);
+    return client.createRoutine({
       title: a.title,
       exercises: [
         {
           exercise_template_id: a.exercise_template_id,
           rest_seconds: 60,
           sets: [
-            { index: 0, weight_kg: Number(a.weight_kg) || 20, reps: Number(a.reps) || 10 },
-            { index: 1, weight_kg: Number(a.weight_kg) || 20, reps: Number(a.reps) || 10 },
+            { index: 0, weight_kg, reps },
+            { index: 1, weight_kg, reps },
           ],
         },
       ],
-    }),
+    });
+  },
   deleteRoutine: (a) => client.deleteRoutine(a.id),
 };
 
@@ -132,8 +142,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname.startsWith("/api/")) {
     const name = url.pathname.slice("/api/".length);
+    // Own-key check so prototype members (constructor, toString, …) aren't callable.
+    if (!Object.prototype.hasOwnProperty.call(handlers, name)) {
+      return sendJson(res, 404, { error: `Unknown method: ${name}` });
+    }
     const handler = handlers[name];
-    if (!handler) return sendJson(res, 404, { error: `Unknown method: ${name}` });
     try {
       const args = await readBody(req);
       const result = await handler(args);
@@ -155,6 +168,7 @@ const server = createServer(async (req, res) => {
   res.end("Not found");
 });
 
-server.listen(PORT, () => {
+// Bind to loopback only — this proxy is authenticated and must stay local.
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n  Hevy API tester → http://localhost:${PORT}\n`);
 });

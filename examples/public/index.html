@@ -196,7 +196,9 @@ async function runAction(a) {
        ${data.hint ? `<div class="hint">${data.hint}</div>` : ""}
        <pre>${highlight(JSON.stringify(payload, null, 2))}</pre>`;
   } catch (e) {
-    result.innerHTML = `<div class="result-head"><span class="status err">● Request failed</span></div><pre>${e.message}</pre>`;
+    // Assign the message via textContent so error text can't inject DOM.
+    result.innerHTML = `<div class="result-head"><span class="status err">● Request failed</span></div><pre></pre>`;
+    result.querySelector("pre").textContent = e instanceof Error ? e.message : String(e);
   } finally {
     btn.disabled = false; btn.textContent = "Run";
   }
