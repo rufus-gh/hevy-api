@@ -3,5 +3,6 @@ dist/
 capture/flows/
 examples/.hevy-token.json
 .env
+.claude/
 *.log
 .DS_Store
