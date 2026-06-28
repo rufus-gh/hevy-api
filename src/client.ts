@@ -1,6 +1,7 @@
 import { HttpClient } from "./http.js";
 import { HevyAuth, type AuthState, type SavedAccountCredentials } from "./auth.js";
 import type { CatalogEntry } from "./match.js";
+import { DEFAULT_EXERCISES } from "./exercises.js";
 import {
   API_KEY,
   BASE_URL,
@@ -139,18 +140,31 @@ export class HevyClient {
   }
 
   /**
-   * Build a catalog of exercise templates the user already has access to,
-   * deduped by `exercise_template_id`: their custom exercises plus every
-   * exercise referenced in their routines and recent workout history. This is
-   * the set to match against before creating a new custom exercise.
+   * Build a catalog of exercise templates, deduped by `exercise_template_id`.
+   * The private app API has no "list all exercises" endpoint (the app bundles
+   * the library), so this unions several sources:
    *
+   *  - Hevy's bundled built-in library ({@link DEFAULT_EXERCISES}, ~140 entries)
+   *  - the user's custom exercises
+   *  - every exercise referenced in their routines and recent workout history
+   *  - optionally, default exercises seen in the social feed (`includeFeed`)
+   *
+   * This is the set to match against before creating a new custom exercise.
+   *
+   * @param opts.includeDefaults Seed with the bundled default library (default true).
+   * @param opts.includeFeed Also harvest default exercises from the social feed
+   *   (off by default; adds network calls but surfaces defaults you've never used).
    * @param opts.maxWorkouts How many recent workouts to scan (default 100).
+   * @param opts.feedPages How many feed pages to scan when `includeFeed` (default 20).
    */
-  async getExerciseCatalog(opts: { maxWorkouts?: number } = {}): Promise<CatalogEntry[]> {
+  async getExerciseCatalog(
+    opts: { includeDefaults?: boolean; includeFeed?: boolean; maxWorkouts?: number; feedPages?: number } = {},
+  ): Promise<CatalogEntry[]> {
     const byId = new Map<string, CatalogEntry>();
     const add = (e: Partial<CatalogEntry> & { exercise_template_id?: string; title?: string }) => {
       if (!e.exercise_template_id || !e.title) return;
-      if (!byId.has(e.exercise_template_id)) {
+      const existing = byId.get(e.exercise_template_id);
+      if (!existing) {
         byId.set(e.exercise_template_id, {
           exercise_template_id: e.exercise_template_id,
           title: e.title,
@@ -158,8 +172,15 @@ export class HevyClient {
           equipment_category: e.equipment_category,
           is_custom: e.is_custom ?? false,
         });
+      } else {
+        // Enrich a previously-seen entry with metadata it was missing.
+        if (!existing.muscle_group && e.muscle_group) existing.muscle_group = e.muscle_group;
+        if (!existing.equipment_category && e.equipment_category) existing.equipment_category = e.equipment_category;
       }
     };
+
+    // Bundled built-in library first, so live data can enrich/override metadata.
+    if (opts.includeDefaults ?? true) for (const e of DEFAULT_EXERCISES) add(e);
 
     const [custom, routines] = await Promise.all([
       this.getCustomExercises().catch(() => [] as ExerciseTemplate[]),
@@ -192,7 +213,32 @@ export class HevyClient {
       if (workouts.length < pageSize) break;
     }
 
+    // Optionally mine the social feed for default exercises you've never used.
+    if (opts.includeFeed) {
+      const feedPages = opts.feedPages ?? 20;
+      let beforeIndex: number | undefined;
+      for (let i = 0; i < feedPages; i++) {
+        let page;
+        try {
+          page = await this.getFeedWorkouts(beforeIndex);
+        } catch {
+          break;
+        }
+        const workouts = page.workouts ?? [];
+        if (workouts.length === 0) break;
+        for (const w of workouts) for (const e of w.exercises ?? []) if (!e.is_custom) add(e);
+        const last = workouts[workouts.length - 1] as Workout & { index?: number };
+        if (last?.index === undefined) break;
+        beforeIndex = last.index;
+      }
+    }
+
     return [...byId.values()];
+  }
+
+  /** Hevy's bundled built-in exercise library (no network call). */
+  getDefaultExercises(): CatalogEntry[] {
+    return DEFAULT_EXERCISES.map((e) => ({ ...e }));
   }
 
   // ---- Workouts ----

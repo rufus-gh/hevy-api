@@ -105,6 +105,8 @@ const ACTIONS = [
   { name: "getAccount", label: "Account", group: "read", desc: "The authenticated user's account." },
   { name: "getUserPreferences", label: "Preferences", group: "read", desc: "App preferences." },
   { name: "getCustomExercises", label: "Custom exercises", group: "read", desc: "Your custom exercise templates." },
+  { name: "getExerciseCatalog", label: "All exercises", group: "read", desc: "Hevy's full built-in library (~140) + your custom + history. Tick feed to mine the social feed for more.",
+    fields: [ { key: "includeFeed", label: "Include social feed", type: "checkbox" } ] },
   { name: "getExerciseTemplateUnits", label: "Exercise units", group: "read", desc: "Per-exercise weight units." },
   { name: "getWorkoutCount", label: "Workout count", group: "read", desc: "Total workouts logged." },
   { name: "getUserWorkouts", label: "Recent workouts", group: "read", desc: "Your workouts, paginated.",
