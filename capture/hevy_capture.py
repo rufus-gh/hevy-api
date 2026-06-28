@@ -84,5 +84,22 @@ class HevyCapture:
             f"[hevy] #{self.count} {record['method']} {record['status']} {record['path']}"
         )
 
+        # Automatically trigger token update if this record contains auth tokens
+        is_refresh_token = "/auth/refresh_token" in record.get("path", "") and record.get("status") == 200 and record.get("res_body")
+        has_auth_header = any(k.lower() == "authorization" for k in record.get("req_headers", {}).keys())
+
+        if is_refresh_token or has_auth_header:
+            import subprocess
+            try:
+                script_path = os.path.join(os.path.dirname(__file__), "use-latest-token.mjs")
+                subprocess.run(
+                    ["node", script_path],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                ctx.log.error(f"[hevy] Failed to run auto-token update: {e}")
+
 
 addons = [HevyCapture()]
