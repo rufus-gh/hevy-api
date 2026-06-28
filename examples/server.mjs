@@ -79,6 +79,7 @@ const handlers = {
   getAccount: () => client.getAccount(),
   getUserPreferences: () => client.getUserPreferences(),
   getCustomExercises: () => client.getCustomExercises(),
+  getExerciseCatalog: (a = {}) => client.getExerciseCatalog({ includeFeed: !!a.includeFeed }),
   getExerciseTemplateUnits: () => client.getExerciseTemplateUnits(),
   getWorkoutCount: () => client.getWorkoutCount(),
   getUserWorkouts: (a = {}) => client.getUserWorkouts({ limit: a.limit ?? 5, offset: a.offset ?? 0 }),
