@@ -1,0 +1,5 @@
+node_modules/
+dist/
+capture/flows/
+*.log
+.DS_Store
