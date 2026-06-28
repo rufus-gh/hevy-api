@@ -21,7 +21,8 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "example": "npm run build && node examples/cli.mjs",
+    "example": "npm run build && node examples/server.mjs",
+    "example:smoke": "node examples/smoke-test.mjs",
     "mcp": "npm run build && node mcp/server.mjs",
     "mcp:test": "npm run build && node mcp/test-client.mjs"
   },
