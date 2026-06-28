@@ -8,4 +8,10 @@ export {
   DEFAULT_APP_BUILD,
   DEFAULT_PLATFORM,
 } from "./constants.js";
+export {
+  normalizeExerciseName,
+  findBestMatch,
+  type CatalogEntry,
+  type MatchResult,
+} from "./match.js";
 export type * from "./types.js";

@@ -6,3 +6,4 @@ examples/.hevy-token.json
 .claude/
 *.log
 .DS_Store
+.claude/

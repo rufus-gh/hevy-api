@@ -22,7 +22,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "example": "npm run build && node examples/server.mjs",
-    "example:smoke": "node examples/smoke-test.mjs"
+    "example:smoke": "node examples/smoke-test.mjs",
+    "mcp": "npm run build && node mcp/server.mjs",
+    "mcp:test": "npm run build && node mcp/test-client.mjs"
   },
   "keywords": [
     "hevy",
@@ -36,5 +38,9 @@
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }
