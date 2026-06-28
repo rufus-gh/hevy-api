@@ -1,5 +1,11 @@
 export { HevyClient, type HevyClientOptions } from "./client.js";
-export { HevyAuth, type AuthState, type TokenResponse } from "./auth.js";
+export {
+  HevyAuth,
+  type AuthState,
+  type TokenResponse,
+  type SavedAccountCredentials,
+} from "./auth.js";
+export { DEFAULT_EXERCISES } from "./exercises.js";
 export { HttpClient, HevyApiError, type RequestOptions, type HttpClientOptions } from "./http.js";
 export {
   BASE_URL,
