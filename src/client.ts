@@ -1,0 +1,211 @@
+import { HttpClient } from "./http.js";
+import { HevyAuth, type AuthState } from "./auth.js";
+import {
+  API_KEY,
+  BASE_URL,
+  DEFAULT_APP_BUILD,
+  DEFAULT_APP_VERSION,
+  DEFAULT_PLATFORM,
+  DEFAULT_USER_AGENT,
+} from "./constants.js";
+import type {
+  Account,
+  CreateExerciseInput,
+  CreateRoutineInput,
+  ExerciseTemplate,
+  ExerciseTemplateUnit,
+  FeedWorkoutsPage,
+  RoutineFolder,
+  SyncBatchResponse,
+  UserPreferences,
+  Workout,
+} from "./types.js";
+
+export interface HevyClientOptions {
+  /**
+   * Refresh token captured from the Hevy app (sent in POST /auth/refresh_token).
+   * The client exchanges it for short-lived access tokens automatically.
+   */
+  refreshToken: string;
+  /** Optional access token + expiry (epoch ms) to skip the first refresh call. */
+  accessToken?: string;
+  expiresAt?: number;
+  /** Persist rotated tokens — the refresh token changes on every refresh. */
+  onTokensRefreshed?: (state: AuthState) => void;
+
+  /** Override the API base URL. */
+  baseUrl?: string;
+  /** Spoofed app version headers; defaults mirror the captured iOS build. */
+  appVersion?: string;
+  appBuild?: string;
+  platform?: string;
+  userAgent?: string;
+  /** Custom fetch (Node <18, tests, proxies). */
+  fetch?: typeof fetch;
+}
+
+/**
+ * Client for the Hevy app's private API, reverse-engineered from captured
+ * traffic. Authentication uses the app's rotating refresh-token scheme plus the
+ * static app API key.
+ */
+export class HevyClient {
+  readonly http: HttpClient;
+  readonly auth: HevyAuth;
+
+  constructor(opts: HevyClientOptions) {
+    if (!opts.refreshToken) {
+      throw new Error("HevyClient requires a refreshToken captured from the app.");
+    }
+    const baseUrl = opts.baseUrl ?? BASE_URL;
+    const fetchImpl = opts.fetch ?? globalThis.fetch;
+
+    this.auth = new HevyAuth({
+      refreshToken: opts.refreshToken,
+      accessToken: opts.accessToken,
+      expiresAt: opts.expiresAt,
+      baseUrl,
+      fetch: fetchImpl,
+      onTokensRefreshed: opts.onTokensRefreshed,
+    });
+
+    this.http = new HttpClient({
+      baseUrl,
+      fetch: fetchImpl,
+      headers: {
+        "x-api-key": API_KEY,
+        "hevy-app-version": opts.appVersion ?? DEFAULT_APP_VERSION,
+        "hevy-app-build": opts.appBuild ?? DEFAULT_APP_BUILD,
+        "hevy-platform": opts.platform ?? DEFAULT_PLATFORM,
+        "user-agent": opts.userAgent ?? DEFAULT_USER_AGENT,
+        accept: "application/json, text/plain, */*",
+      },
+      authHeaders: async () => ({
+        authorization: `Bearer ${await this.auth.getAccessToken()}`,
+      }),
+      onUnauthorized: async () => {
+        await this.auth.refresh();
+      },
+    });
+  }
+
+  private _username?: string;
+
+  // ---- Account & preferences ----
+
+  /** The authenticated user's account. */
+  getAccount() {
+    return this.http.get<Account>("/user/account");
+  }
+
+  /** Cached username of the authenticated user (for endpoints that require it). */
+  private async username(): Promise<string> {
+    if (!this._username) this._username = (await this.getAccount()).username;
+    return this._username;
+  }
+
+  getUserPreferences() {
+    return this.http.get<UserPreferences>("/user_preferences");
+  }
+
+  // ---- Exercises ----
+
+  /** The user's custom exercise templates. */
+  getCustomExercises() {
+    return this.http.get<ExerciseTemplate[]>("/custom_exercise_templates");
+  }
+
+  getExerciseTemplateUnits() {
+    return this.http.get<ExerciseTemplateUnit[]>("/exercise_template_units");
+  }
+
+  /** Create a custom exercise. Returns the new exercise id. */
+  createCustomExercise(input: CreateExerciseInput) {
+    return this.http.post<{ id: string }>("/custom_exercise_template", {
+      exercise: { other_muscles: [], ...input },
+    });
+  }
+
+  // ---- Workouts ----
+
+  /**
+   * The social workout feed (your follows + own workouts), full exercise/set
+   * detail. Paginate by passing the `index` of the last seen workout to fetch
+   * older entries (`GET /feed_workouts_paged/:index`).
+   */
+  getFeedWorkouts(beforeIndex?: number) {
+    const path = beforeIndex === undefined ? "/feed_workouts_paged" : `/feed_workouts_paged/${beforeIndex}`;
+    return this.http.get<FeedWorkoutsPage>(path);
+  }
+
+  /**
+   * A user's own workouts, paginated by limit/offset. Defaults to the
+   * authenticated user (resolved + cached from the account on first use).
+   */
+  async getUserWorkouts(params: { username?: string; limit?: number; offset?: number } = {}) {
+    const username = params.username ?? (await this.username());
+    return this.http.get<FeedWorkoutsPage>("/user_workouts_paged", {
+      query: { username, limit: params.limit ?? 10, offset: params.offset ?? 0 },
+    });
+  }
+
+  /** A single workout by id, with full detail. */
+  getWorkout(id: string) {
+    return this.http.get<Workout>(`/workout/${id}`);
+  }
+
+  /** Total number of workouts the authenticated user has logged. */
+  async getWorkoutCount() {
+    const res = await this.http.get<{ workout_count: number }>("/workout_count");
+    return res.workout_count;
+  }
+
+  /**
+   * Delta-sync the user's workouts. Pass a map of `{ workoutId: lastUpdatedISO }`
+   * the server already knows about; it returns only what changed. Pass `{}` to
+   * fetch everything.
+   */
+  syncWorkouts(known: Record<string, string> = {}) {
+    return this.http.post<SyncBatchResponse<Workout>>("/workouts_sync_batch", known);
+  }
+
+  // ---- Routines ----
+
+  getRoutineFolders() {
+    return this.http.get<RoutineFolder[]>("/routine_folders");
+  }
+
+  /** Delta-sync routines. Pass `{}` to fetch everything. */
+  syncRoutines(known: Record<string, string> = {}) {
+    return this.http.post<SyncBatchResponse>("/routines_sync_batch", known);
+  }
+
+  /** Create a routine (template). Returns the new routine id. */
+  createRoutine(input: CreateRoutineInput) {
+    const clientId = makeClientId();
+    const routine = {
+      title: input.title,
+      folder_id: input.folder_id ?? null,
+      index: -1,
+      notes: input.notes ?? null,
+      program_id: null,
+      exercises: input.exercises.map((ex) => ({
+        exercise_template_id: ex.exercise_template_id,
+        notes: ex.notes ?? "",
+        rest_seconds: ex.rest_seconds ?? 0,
+        sets: ex.sets.map((s) => ({ indicator: "normal", ...s })),
+      })),
+      _unsyncedObjectId: clientId,
+      clientId,
+    };
+    return this.http.post<{ routineId: string }>("/routine", { routine });
+  }
+}
+
+/** Hevy uses client-generated UUIDs for new routines. */
+function makeClientId(): string {
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    throw new Error("crypto.randomUUID unavailable; pass a clientId or upgrade your runtime.");
+  }
+  return globalThis.crypto.randomUUID();
+}
