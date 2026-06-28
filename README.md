@@ -82,9 +82,12 @@ const { routineId } = await client.createRoutine({
 });
 ```
 
-## Try it — interactive demo
+## Try it — web tester
 
-An interactive CLI that exercises every method against the live API:
+A small local web app that exercises every method against the live API. It runs
+a zero-dependency Node server (`examples/server.mjs`) that serves the UI and
+proxies calls to Hevy — browsers can't hit `api.hevyapp.com` directly (CORS),
+and this keeps your token server-side instead of in browser JS.
 
 ```bash
 # 1. Get a refresh token from a capture (see CAPTURE.md)
@@ -92,14 +95,28 @@ node capture/extract-token.mjs
 # 2. Make it available, either:
 export HEVY_REFRESH_TOKEN="<refresh_token>"
 #    or write examples/.hevy-token.json: { "refreshToken": "<refresh_token>" }
-# 3. Run the demo
-npm run example
+# 3. Start it
+npm run example          # builds, then serves http://localhost:5173
 ```
 
-You get a menu to read your account, workouts, routines, etc., search routines,
-and (opt-in, guarded) create/delete exercises and routines. The rotating refresh
-token is persisted back to `examples/.hevy-token.json` so repeated runs keep
-working. Option **15** runs all read-only checks in one go.
+Open http://localhost:5173 and click through the sidebar: read your account,
+workouts, routines, etc., search routines, and (opt-in, guarded) create/delete
+exercises and routines. Results render as syntax-highlighted JSON. The rotating
+refresh token is persisted back to `examples/.hevy-token.json` so repeated runs
+keep working.
+
+To verify everything end-to-end against the live API, start the server and run
+the smoke test (it hits every endpoint and does a create→delete write cycle that
+cleans up after itself):
+
+```bash
+npm run example          # terminal 1
+npm run example:smoke    # terminal 2
+```
+
+> `capture/use-latest-token.mjs` writes the freshest token from your capture into
+> `examples/.hevy-token.json`, preferring a still-valid access token so testing
+> reads doesn't rotate (and log out) your app session.
 
 ## MCP server — "design a plan and add it to Hevy"
 

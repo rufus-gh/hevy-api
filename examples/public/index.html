@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hevy API tester</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --border: #2a3140;
+    --text: #e6edf3;
+    --muted: #8b97a7;
+    --accent: #4f8cff;
+    --accent-soft: #1b2740;
+    --warn: #e3a008;
+    --danger: #f0506e;
+    --ok: #3fb950;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; grid-template-columns: 280px 1fr;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  aside {
+    background: var(--panel); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 18px 14px;
+  }
+  aside h1 { font-size: 15px; margin: 4px 8px 2px; }
+  aside .sub { color: var(--muted); font-size: 12px; margin: 0 8px 16px; }
+  .group-label {
+    text-transform: uppercase; letter-spacing: .08em; font-size: 11px;
+    color: var(--muted); margin: 18px 8px 8px;
+  }
+  .nav-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    background: transparent; border: 1px solid transparent; color: var(--text);
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .nav-btn:hover { background: var(--panel-2); }
+  .nav-btn.active { background: var(--accent-soft); border-color: var(--accent); }
+  .nav-btn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+  .nav-btn.write .dot { background: var(--warn); }
+  .nav-btn.danger .dot { background: var(--danger); }
+
+  main { overflow-y: auto; padding: 28px 32px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 22px; max-width: 920px;
+  }
+  .method { font-family: var(--mono); color: var(--accent); font-size: 13px; }
+  h2 { margin: 4px 0 6px; font-size: 20px; }
+  .desc { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field select {
+    width: 100%; max-width: 360px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 13px;
+  }
+  .field input[type=checkbox] { width: auto; }
+  .row { display: flex; gap: 14px; align-items: center; margin: 18px 0 6px; }
+  button.run {
+    background: var(--accent); color: #fff; border: 0; padding: 10px 20px;
+    border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.run.warn { background: var(--warn); color: #1a1300; }
+  button.run.danger { background: var(--danger); }
+  button.run:disabled { opacity: .55; cursor: default; }
+  .badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; font-weight: 600; }
+  .badge.write { background: rgba(227,160,8,.15); color: var(--warn); }
+  .badge.danger { background: rgba(240,80,110,.15); color: var(--danger); }
+
+  .result { margin-top: 22px; }
+  .result-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+  .status { font-weight: 700; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--danger); }
+  .hint { color: var(--warn); font-size: 12px; margin: 6px 0; }
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; overflow: auto; max-height: 60vh; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55; margin: 0;
+  }
+  .tok-str { color: #7ee787; } .tok-num { color: #79c0ff; }
+  .tok-bool { color: #ffa657; } .tok-null { color: var(--muted); }
+  .tok-key { color: #d2a8ff; }
+  .empty { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <aside>
+    <h1>Hevy API tester</h1>
+    <p class="sub">Reverse-engineered client · live API</p>
+    <div id="nav"></div>
+  </aside>
+  <main>
+    <div id="panel" class="card"><p class="empty">Pick a feature on the left.</p></div>
+  </main>
+
+<script type="module">
+const ACTIONS = [
+  { name: "getAccount", label: "Account", group: "read", desc: "The authenticated user's account." },
+  { name: "getUserPreferences", label: "Preferences", group: "read", desc: "App preferences." },
+  { name: "getCustomExercises", label: "Custom exercises", group: "read", desc: "Your custom exercise templates." },
+  { name: "getExerciseTemplateUnits", label: "Exercise units", group: "read", desc: "Per-exercise weight units." },
+  { name: "getWorkoutCount", label: "Workout count", group: "read", desc: "Total workouts logged." },
+  { name: "getUserWorkouts", label: "Recent workouts", group: "read", desc: "Your workouts, paginated.",
+    fields: [ { key: "limit", label: "Limit", type: "number", value: 5 }, { key: "offset", label: "Offset", type: "number", value: 0 } ] },
+  { name: "getWorkout", label: "Workout by id", group: "read", desc: "A single workout, full detail.",
+    fields: [ { key: "id", label: "Workout id", placeholder: "uuid from Recent workouts" } ] },
+  { name: "getFeedWorkouts", label: "Feed", group: "read", desc: "Social workout feed.",
+    fields: [ { key: "beforeIndex", label: "Before index (optional)", type: "number", placeholder: "leave blank for latest" } ] },
+  { name: "getRoutineFolders", label: "Routine folders", group: "read", desc: "Your routine folders." },
+  { name: "getRoutines", label: "List routines", group: "read", desc: "All your routines, full detail." },
+  { name: "searchRoutines", label: "Search routines", group: "read", desc: "Client-side filter (Hevy has no server-side routine search).",
+    fields: [ { key: "query", label: "Query" }, { key: "matchExercises", label: "Also match exercise names", type: "checkbox" } ] },
+
+  { name: "createCustomExercise", label: "Create exercise", group: "write", desc: "Create a custom exercise.",
+    fields: [ { key: "title", label: "Title", placeholder: "Meadows Row" },
+              { key: "muscle_group", label: "Muscle group", value: "biceps" },
+              { key: "equipment_category", label: "Equipment", value: "barbell" } ] },
+  { name: "createRoutine", label: "Create routine", group: "write", desc: "Create a routine with one 2-set exercise.",
+    fields: [ { key: "title", label: "Routine title", placeholder: "Push Day" },
+              { key: "exercise_template_id", label: "exercise_template_id", placeholder: "from Custom exercises" },
+              { key: "weight_kg", label: "Weight (kg)", type: "number", value: 20 },
+              { key: "reps", label: "Reps", type: "number", value: 10 } ] },
+  { name: "deleteRoutine", label: "Delete routine", group: "danger", desc: "Permanently delete a routine.", confirm: true,
+    fields: [ { key: "id", label: "Routine id" } ] },
+];
+
+const GROUPS = { read: "Read", write: "Write", danger: "Danger" };
+const nav = document.getElementById("nav");
+const panel = document.getElementById("panel");
+
+for (const g of ["read", "write", "danger"]) {
+  const lab = document.createElement("div"); lab.className = "group-label"; lab.textContent = GROUPS[g]; nav.appendChild(lab);
+  for (const a of ACTIONS.filter(x => x.group === g)) {
+    const b = document.createElement("button");
+    b.className = "nav-btn " + (g === "read" ? "" : g);
+    b.innerHTML = `<span class="dot"></span>${a.label}`;
+    b.onclick = () => select(a, b);
+    nav.appendChild(b);
+  }
+}
+
+function select(a, btn) {
+  document.querySelectorAll(".nav-btn").forEach(x => x.classList.remove("active"));
+  btn.classList.add("active");
+  render(a);
+}
+
+function render(a) {
+  const badge = a.group === "write" ? `<span class="badge write">write</span>`
+    : a.group === "danger" ? `<span class="badge danger">destructive</span>` : "";
+  const fields = (a.fields || []).map(f => {
+    if (f.type === "checkbox")
+      return `<div class="field"><label><input type="checkbox" data-key="${f.key}"> ${f.label}</label></div>`;
+    return `<div class="field"><label>${f.label}</label>
+      <input data-key="${f.key}" type="${f.type || "text"}" placeholder="${f.placeholder || ""}" value="${f.value ?? ""}"></div>`;
+  }).join("");
+  const cls = a.group === "danger" ? "danger" : a.group === "write" ? "warn" : "";
+  panel.innerHTML = `
+    <div class="method">client.${a.name}()</div>
+    <h2>${a.label} ${badge}</h2>
+    <p class="desc">${a.desc}</p>
+    ${fields}
+    <div class="row"><button class="run ${cls}" id="run">Run</button></div>
+    <div class="result" id="result"></div>`;
+  document.getElementById("run").onclick = () => runAction(a);
+}
+
+async function runAction(a) {
+  const args = {};
+  for (const el of panel.querySelectorAll("[data-key]")) {
+    if (el.type === "checkbox") args[el.dataset.key] = el.checked;
+    else if (el.value !== "") args[el.dataset.key] = el.type === "number" ? Number(el.value) : el.value;
+  }
+  if (a.confirm && !confirm(`Really run ${a.name}? This is destructive.`)) return;
+
+  const btn = document.getElementById("run");
+  const result = document.getElementById("result");
+  btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const r = await fetch("/api/" + a.name, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args),
+    });
+    const data = await r.json();
+    const ok = data.ok;
+    const payload = ok ? data.result : { error: data.error, status: data.status, body: data.body };
+    result.innerHTML =
+      `<div class="result-head"><span class="status ${ok ? "ok" : "err"}">${ok ? "● 200 OK" : "● Error"}</span>
+       <span class="desc">client.${a.name}()</span></div>
+       ${data.hint ? `<div class="hint">${data.hint}</div>` : ""}
+       <pre>${highlight(JSON.stringify(payload, null, 2))}</pre>`;
+  } catch (e) {
+    // Assign the message via textContent so error text can't inject DOM.
+    result.innerHTML = `<div class="result-head"><span class="status err">● Request failed</span></div><pre></pre>`;
+    result.querySelector("pre").textContent = e instanceof Error ? e.message : String(e);
+  } finally {
+    btn.disabled = false; btn.textContent = "Run";
+  }
+}
+
+function highlight(json) {
+  return json
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+      (m) => {
+        let cls = "tok-num";
+        if (/^"/.test(m)) cls = /:$/.test(m) ? "tok-key" : "tok-str";
+        else if (/true|false/.test(m)) cls = "tok-bool";
+        else if (/null/.test(m)) cls = "tok-null";
+        return `<span class="${cls}">${m}</span>`;
+      });
+}
+</script>
+</body>
+</html>
