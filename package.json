@@ -21,7 +21,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "example": "npm run build && node examples/cli.mjs"
+    "example": "npm run build && node examples/server.mjs"
   },
   "keywords": [
     "hevy",
