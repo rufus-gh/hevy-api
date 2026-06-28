@@ -161,6 +161,55 @@ export interface RoutineFolder {
   [key: string]: unknown;
 }
 
+/** A target set within a saved routine. */
+export interface RoutineSet {
+  index: number;
+  indicator: SetIndicator;
+  weight_kg: number | null;
+  reps: number | null;
+  distance_meters: number | null;
+  duration_seconds: number | null;
+  custom_metric: number | null;
+  rpe: number | null;
+}
+
+export interface RoutineExercise {
+  id: string;
+  exercise_template_id: string;
+  title: string;
+  notes: string;
+  sets: RoutineSet[];
+  rest_seconds: number;
+  superset_id: string | null;
+  exercise_type: ExerciseType;
+  muscle_group: string;
+  other_muscles: string[];
+  equipment_category: string;
+  warmup_set_count: number;
+  normal_set_count: number;
+  url?: string;
+  thumbnail_url?: string;
+  media_type?: string;
+  [key: string]: unknown;
+}
+
+/** A saved routine (template) as returned by routines_sync_batch. */
+export interface Routine {
+  id: string;
+  title: string;
+  username: string;
+  notes: string | null;
+  index: number;
+  folder_id: string | null;
+  short_id: string;
+  program_id: string | null;
+  parent_routine_id: string | null;
+  created_at: string;
+  updated_at: string;
+  exercises: RoutineExercise[];
+  [key: string]: unknown;
+}
+
 export interface ExerciseTemplateUnit {
   id: number;
   exercise_template_id: string;

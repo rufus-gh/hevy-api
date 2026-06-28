@@ -15,6 +15,7 @@ import type {
   ExerciseTemplate,
   ExerciseTemplateUnit,
   FeedWorkoutsPage,
+  Routine,
   RoutineFolder,
   SyncBatchResponse,
   UserPreferences,
@@ -175,9 +176,52 @@ export class HevyClient {
     return this.http.get<RoutineFolder[]>("/routine_folders");
   }
 
-  /** Delta-sync routines. Pass `{}` to fetch everything. */
+  /**
+   * Delta-sync routines. Pass a `{ routineId: updatedAtISO }` map of routines
+   * the server already knows about to get only changes; pass `{}` (default) to
+   * fetch everything. The full routine objects come back in `updated`.
+   */
   syncRoutines(known: Record<string, string> = {}) {
-    return this.http.post<SyncBatchResponse>("/routines_sync_batch", known);
+    return this.http.post<SyncBatchResponse<Routine>>("/routines_sync_batch", known);
+  }
+
+  /** All of the authenticated user's routines (full detail). */
+  async getRoutines(): Promise<Routine[]> {
+    const { updated } = await this.syncRoutines({});
+    return updated;
+  }
+
+  /**
+   * Search the user's routines. Hevy has no server-side routine search, so this
+   * fetches all routines and filters them locally (case-insensitive).
+   *
+   * @param query Text to match. Empty/whitespace returns all routines.
+   * @param opts.fields Where to match: routine `title` (default), `notes`,
+   *   and/or exercise `exercises` titles.
+   */
+  async searchRoutines(
+    query: string,
+    opts: { fields?: Array<"title" | "notes" | "exercises"> } = {},
+  ): Promise<Routine[]> {
+    const routines = await this.getRoutines();
+    const q = query.trim().toLowerCase();
+    if (!q) return routines;
+    const fields = opts.fields ?? ["title"];
+    return routines.filter((r) => {
+      if (fields.includes("title") && r.title?.toLowerCase().includes(q)) return true;
+      if (fields.includes("notes") && r.notes?.toLowerCase().includes(q)) return true;
+      if (
+        fields.includes("exercises") &&
+        r.exercises?.some((e) => e.title?.toLowerCase().includes(q))
+      )
+        return true;
+      return false;
+    });
+  }
+
+  /** Delete a routine by id. */
+  deleteRoutine(id: string) {
+    return this.http.delete<void>(`/routine/${id}`);
   }
 
   /** Create a routine (template). Returns the new routine id. */

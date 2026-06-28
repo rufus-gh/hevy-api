@@ -54,6 +54,11 @@ const { workouts } = await client.getFeedWorkouts({ limit: 10 });
 // Sync everything the server knows (delta-sync; {} = full)
 const { updated } = await client.syncWorkouts({});
 
+// Routines (Hevy has no server-side routine search, so this filters locally)
+const routines = await client.getRoutines();
+const pushDays = await client.searchRoutines("push");
+const withSquats = await client.searchRoutines("squat", { fields: ["exercises"] });
+
 // Write
 const { id } = await client.createCustomExercise({
   title: "Meadows Row",
@@ -92,8 +97,11 @@ const { routineId } = await client.createRoutine({
 | `getFeedWorkouts(beforeIndex?)` | Social feed, full detail | `GET /feed_workouts_paged[/:index]` |
 | `syncWorkouts(known)` | Delta-sync workouts | `POST /workouts_sync_batch` |
 | `getRoutineFolders()` | Routine folders | `GET /routine_folders` |
+| `getRoutines()` | All your routines (full detail) | `POST /routines_sync_batch` |
+| `searchRoutines(query, opts?)` | Search routines (client-side filter) | — |
 | `syncRoutines(known)` | Delta-sync routines | `POST /routines_sync_batch` |
 | `createRoutine(input)` | Create a routine/template | `POST /routine` |
+| `deleteRoutine(id)` | Delete a routine | `DELETE /routine/:id` |
 
 The raw `client.http` instance is exposed for endpoints not yet wrapped — over
 30 more were seen in captured traffic (notifications, friends, body
