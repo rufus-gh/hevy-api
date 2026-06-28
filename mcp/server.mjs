@@ -2,15 +2,22 @@
 /**
  * MCP server for the Hevy API.
  *
- * Lets an MCP client (Claude Desktop / Claude Code) design a workout plan and
- * push it to Hevy as a routine, **prioritising exercises you already have over
- * creating new custom ones**: each planned exercise is fuzzy-matched against a
- * catalog built from your custom exercises + routines + workout history, and a
- * custom exercise is created only when nothing matches.
+ * Exposes the full HevyClient surface to an MCP client (Claude Desktop / Claude
+ * Code): profile & preferences, the full exercise library (browse/search),
+ * workouts (list/detail), the social feed, routines (list/detail/search/create/
+ * delete), routine folders, and custom-exercise creation.
  *
- * Auth: set HEVY_REFRESH_TOKEN, or point HEVY_TOKEN_FILE at a JSON file
- * containing { "refreshToken": "...", "accessToken"?, "expiresAt"? }.
- * Rotated tokens are persisted back to the token file.
+ * create_routine **prioritises exercises you already have over creating new
+ * custom ones**: each planned exercise is fuzzy-matched against Hevy's bundled
+ * library + your custom exercises/routines/history, and a custom exercise is
+ * created only when nothing matches.
+ *
+ * Auth (preferred → fallback):
+ *   1. HEVY_USER_ID + HEVY_SECRET env vars      (saved-account, never expires)
+ *   2. HEVY_TOKEN_FILE { userId, secret }        (saved-account, never expires)
+ *   3. HEVY_REFRESH_TOKEN / { refreshToken }     (rotating, can expire)
+ * With saved-account credentials the server stays logged in indefinitely,
+ * minting a fresh access token from the stable secret on each call.
  *
  * All logging goes to stderr — stdout is reserved for the MCP protocol.
  */
@@ -86,11 +93,13 @@ const server = new McpServer(
   { name: "hevy", version: "0.1.0" },
   {
     instructions:
-      "Tools for designing workouts and saving them to Hevy. list_exercises returns " +
-      "Hevy's full built-in exercise library (~140 default exercises) plus your custom " +
-      "ones — use it to browse or pick exact exercises. To add a plan, call create_routine " +
-      "with a list of exercises by name; the server matches each name against that whole " +
-      "library before creating a new custom exercise, so existing exercises are reused.",
+      "Tools to read and manage a Hevy account and design workouts.\n" +
+      "Read: get_profile, get_preferences, list_exercises (full built-in library + custom), " +
+      "list_workouts/get_workout, get_feed, list_routines/get_routine/search_routines, list_routine_folders.\n" +
+      "Write: create_routine (the main one), create_exercise, delete_routine.\n" +
+      "To save a plan, call create_routine with exercises by name; each name is matched against " +
+      "Hevy's whole library + your exercises before any new custom exercise is created, so existing " +
+      "ones are reused. Use list_exercises first to browse or pick exact exercises/ids.",
   },
 );
 
@@ -141,6 +150,72 @@ const err = (message, extra) => ({
   content: [{ type: "text", text: JSON.stringify({ error: message, ...extra }, null, 2) }],
 });
 
+// Hevy workout times are unix seconds; render ISO and minutes for readability.
+const isoFromSeconds = (s) => (typeof s === "number" ? new Date(s * 1000).toISOString() : null);
+
+/** Compact summary of a workout (avoids dumping every set into context). */
+function summarizeWorkout(w) {
+  return {
+    id: w.id,
+    name: w.name,
+    by: w.username,
+    date: isoFromSeconds(w.start_time),
+    duration_min:
+      typeof w.start_time === "number" && typeof w.end_time === "number"
+        ? Math.round((w.end_time - w.start_time) / 60)
+        : null,
+    volume_kg: w.estimated_volume_kg,
+    exercises: (w.exercises ?? []).map((e) => ({
+      title: e.title,
+      sets: e.sets?.length ?? 0,
+    })),
+  };
+}
+
+/** Full detail of a workout, including every set. */
+function detailWorkout(w) {
+  return {
+    id: w.id,
+    name: w.name,
+    by: w.username,
+    date: isoFromSeconds(w.start_time),
+    duration_min:
+      typeof w.start_time === "number" && typeof w.end_time === "number"
+        ? Math.round((w.end_time - w.start_time) / 60)
+        : null,
+    volume_kg: w.estimated_volume_kg,
+    description: w.description,
+    exercises: (w.exercises ?? []).map((e) => ({
+      title: e.title,
+      exercise_template_id: e.exercise_template_id,
+      notes: e.notes || undefined,
+      sets: (e.sets ?? []).map((s) => ({
+        type: s.indicator,
+        weight_kg: s.weight_kg,
+        reps: s.reps,
+        duration_seconds: s.duration_seconds,
+        distance_meters: s.distance_meters,
+        rpe: s.rpe,
+      })),
+    })),
+  };
+}
+
+/** Compact summary of a routine. */
+function summarizeRoutine(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    folder_id: r.folder_id,
+    updated_at: r.updated_at,
+    exercises: (r.exercises ?? []).map((e) => ({
+      title: e.title,
+      exercise_template_id: e.exercise_template_id,
+      sets: e.sets?.length ?? 0,
+    })),
+  };
+}
+
 server.registerTool(
   "get_profile",
   {
@@ -152,6 +227,22 @@ server.registerTool(
     try {
       const [account, workout_count] = await Promise.all([client.getAccount(), client.getWorkoutCount()]);
       return ok({ username: account.username, country: account.country_code, workout_count });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "get_preferences",
+  {
+    title: "Get preferences",
+    description: "The user's Hevy app preferences (units, first weekday, RPE settings, etc.).",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return ok(await client.getUserPreferences());
     } catch (e) {
       return err(e.message);
     }
@@ -206,18 +297,189 @@ server.registerTool(
 );
 
 server.registerTool(
+  "create_exercise",
+  {
+    title: "Create a custom exercise",
+    description:
+      "Create a single custom exercise template. Normally you don't need this — create_routine creates any " +
+      "missing exercises automatically. Use it to add an exercise on its own. Note: cable exercises use equipment 'machine'.",
+    inputSchema: {
+      title: z.string().describe("Exercise name, e.g. 'Meadows Row'."),
+      muscle_group: z.enum(MUSCLE_GROUPS).describe("Primary muscle group."),
+      equipment: z.enum(EQUIPMENT).describe("Equipment (cable → 'machine')."),
+      exercise_type: z.enum(EXERCISE_TYPES).optional().describe("Defaults to weight_reps."),
+    },
+  },
+  async ({ title, muscle_group, equipment, exercise_type }) => {
+    try {
+      const created = await client.createCustomExercise({
+        title,
+        exercise_type: exercise_type ?? "weight_reps",
+        muscle_group,
+        equipment_category: equipment,
+      });
+      catalogCache = null; // invalidate so the new exercise is matchable next time
+      return ok({ created: true, id: created.id, title, muscle_group, equipment });
+    } catch (e) {
+      return err(e.message, { body: e.body ?? null });
+    }
+  },
+);
+
+server.registerTool(
+  "list_workouts",
+  {
+    title: "List recent workouts",
+    description:
+      "The user's own logged workouts, most recent first, as compact summaries (name, date, duration, volume, " +
+      "per-exercise set counts). Paginate with limit/offset. Use get_workout for full set-by-set detail.",
+    inputSchema: {
+      limit: z.number().int().optional().describe("How many to return (default 10)."),
+      offset: z.number().int().optional().describe("Skip this many (default 0)."),
+    },
+  },
+  async ({ limit, offset }) => {
+    try {
+      const page = await client.getUserWorkouts({ limit: limit ?? 10, offset: offset ?? 0 });
+      const workouts = page.workouts ?? [];
+      return ok({ count: workouts.length, workouts: workouts.map(summarizeWorkout) });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "get_workout",
+  {
+    title: "Get a workout",
+    description: "Full set-by-set detail of one workout by id (get ids from list_workouts).",
+    inputSchema: { id: z.string().describe("Workout id from list_workouts.") },
+  },
+  async ({ id }) => {
+    try {
+      return ok(detailWorkout(await client.getWorkout(id)));
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "get_feed",
+  {
+    title: "Get social feed",
+    description:
+      "The social workout feed (people the user follows + their own), as compact summaries. Paginate by passing " +
+      "before_index = the index of the last workout from the previous page.",
+    inputSchema: {
+      before_index: z.number().int().optional().describe("Fetch older entries before this workout index."),
+    },
+  },
+  async ({ before_index }) => {
+    try {
+      const page = await client.getFeedWorkouts(before_index);
+      const workouts = page.workouts ?? [];
+      const next = workouts.length ? workouts[workouts.length - 1].index : null;
+      return ok({ count: workouts.length, next_before_index: next, workouts: workouts.map(summarizeWorkout) });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
   "list_routines",
   {
     title: "List routines",
-    description: "List the user's existing Hevy routines (id, title, exercise count).",
+    description: "List the user's existing Hevy routines as compact summaries (id, title, folder, exercises).",
     inputSchema: {},
   },
   async () => {
     try {
       const routines = await client.getRoutines();
+      return ok({ count: routines.length, routines: routines.map(summarizeRoutine) });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "get_routine",
+  {
+    title: "Get a routine",
+    description: "Full detail of one routine by id, including every exercise's target sets.",
+    inputSchema: { id: z.string().describe("Routine id from list_routines.") },
+  },
+  async ({ id }) => {
+    try {
+      const routines = await client.getRoutines();
+      const r = routines.find((x) => x.id === id || x.short_id === id);
+      if (!r) return err(`No routine found with id ${id}.`);
       return ok({
-        count: routines.length,
-        routines: routines.map((r) => ({ id: r.id, title: r.title, exercises: r.exercises?.length ?? 0 })),
+        ...summarizeRoutine(r),
+        notes: r.notes,
+        exercises: (r.exercises ?? []).map((e) => ({
+          title: e.title,
+          exercise_template_id: e.exercise_template_id,
+          notes: e.notes || undefined,
+          rest_seconds: e.rest_seconds,
+          sets: (e.sets ?? []).map((s) => ({
+            type: s.indicator,
+            weight_kg: s.weight_kg,
+            reps: s.reps,
+            duration_seconds: s.duration_seconds,
+            distance_meters: s.distance_meters,
+            rpe: s.rpe,
+          })),
+        })),
+      });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "search_routines",
+  {
+    title: "Search routines",
+    description:
+      "Search the user's routines by text (Hevy has no server-side routine search, so this filters locally). " +
+      "Matches the routine title by default; optionally also notes and exercise names.",
+    inputSchema: {
+      query: z.string().describe("Text to match (case-insensitive)."),
+      match_notes: z.boolean().optional().describe("Also match routine notes."),
+      match_exercises: z.boolean().optional().describe("Also match exercise names within routines."),
+    },
+  },
+  async ({ query, match_notes, match_exercises }) => {
+    try {
+      const fields = ["title"];
+      if (match_notes) fields.push("notes");
+      if (match_exercises) fields.push("exercises");
+      const routines = await client.searchRoutines(query, { fields });
+      return ok({ query, count: routines.length, routines: routines.map(summarizeRoutine) });
+    } catch (e) {
+      return err(e.message);
+    }
+  },
+);
+
+server.registerTool(
+  "list_routine_folders",
+  {
+    title: "List routine folders",
+    description: "The user's routine folders (id, title) — use a folder id as folder_id when creating a routine.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const folders = await client.getRoutineFolders();
+      return ok({
+        count: folders.length,
+        folders: folders.map((f) => ({ id: f.id, title: f.title, index: f.index })),
       });
     } catch (e) {
       return err(e.message);
