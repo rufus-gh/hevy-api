@@ -27,24 +27,36 @@ const log = (...a) => console.error("[hevy-mcp]", ...a);
 // ---- Auth ----
 const TOKEN_FILE = process.env.HEVY_TOKEN_FILE || join(homedir(), ".hevy-mcp", "token.json");
 
+/**
+ * Priority order:
+ *  1. HEVY_USER_ID + HEVY_SECRET env vars  (saved-account, persistent)
+ *  2. TOKEN_FILE { userId, secret }          (saved-account, persistent)
+ *  3. HEVY_REFRESH_TOKEN env var             (rotating, expires)
+ *  4. TOKEN_FILE { refreshToken / accessToken }
+ */
 function loadAuth() {
+  if (process.env.HEVY_USER_ID && process.env.HEVY_SECRET) {
+    return { savedAccount: { userId: process.env.HEVY_USER_ID, secret: process.env.HEVY_SECRET } };
+  }
   if (existsSync(TOKEN_FILE)) {
     try {
       const t = JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
+      if (t.userId && t.secret) return { savedAccount: { userId: t.userId, secret: t.secret } };
       if (t.refreshToken || t.accessToken) return t;
     } catch {
       /* fall through */
     }
   }
   if (process.env.HEVY_REFRESH_TOKEN) return { refreshToken: process.env.HEVY_REFRESH_TOKEN };
-  log(`No token. Set HEVY_REFRESH_TOKEN or create ${TOKEN_FILE}`);
+  log(`No credentials. Add { "userId": "...", "secret": "..." } to ${TOKEN_FILE} for persistent login.`);
   process.exit(1);
 }
 
 function persist(state) {
   try {
     mkdirSync(dirname(TOKEN_FILE), { recursive: true });
-    writeFileSync(TOKEN_FILE, JSON.stringify({ refreshToken: state.refreshToken }, null, 2));
+    const existing = existsSync(TOKEN_FILE) ? JSON.parse(readFileSync(TOKEN_FILE, "utf8")) : {};
+    writeFileSync(TOKEN_FILE, JSON.stringify({ ...existing, refreshToken: state.refreshToken, accessToken: state.accessToken, expiresAt: state.expiresAt }, null, 2));
   } catch (e) {
     log("could not persist token:", e.message);
   }
@@ -52,7 +64,8 @@ function persist(state) {
 
 const auth = loadAuth();
 const client = new HevyClient({
-  refreshToken: auth.refreshToken ?? auth.accessToken,
+  savedAccount: auth.savedAccount,
+  refreshToken: auth.refreshToken,
   accessToken: auth.accessToken,
   expiresAt: auth.expiresAt,
   onTokensRefreshed: persist,
