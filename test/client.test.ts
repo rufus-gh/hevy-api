@@ -97,6 +97,30 @@ describe("HevyClient", () => {
     expect(accountHits).toBe(2);
   });
 
+  it("searches routines client-side by title and exercise", async () => {
+    const routines = [
+      { id: "1", title: "Push Day", notes: "chest", exercises: [{ title: "Bench Press" }] },
+      { id: "2", title: "Pull Day", notes: null, exercises: [{ title: "Lat Pulldown" }] },
+      { id: "3", title: "Legs", notes: null, exercises: [{ title: "Squat" }] },
+    ];
+    const fetch = fakeFetch(() => ({ body: { updated: routines, deleted: [], isMore: false } }));
+    const client = new HevyClient({
+      refreshToken: "r1",
+      accessToken: "a1",
+      expiresAt: Date.now() + 3_600_000,
+      fetch,
+    });
+
+    expect((await client.searchRoutines("day")).map((r) => r.id)).toEqual(["1", "2"]);
+    // empty query returns everything
+    expect((await client.searchRoutines("  ")).length).toBe(3);
+    // exercise-title matching is opt-in
+    expect((await client.searchRoutines("squat")).length).toBe(0);
+    expect(
+      (await client.searchRoutines("squat", { fields: ["exercises"] })).map((r) => r.id),
+    ).toEqual(["3"]);
+  });
+
   it("shapes createRoutine into the app's payload", async () => {
     let sentBody: any;
     const fetch = fakeFetch((url, init) => {
