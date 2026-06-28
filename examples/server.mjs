@@ -24,42 +24,50 @@ const TOKEN_FILE = join(here, ".hevy-token.json");
 const PORT = Number(process.env.PORT || 5173);
 
 /**
- * Loads auth from examples/.hevy-token.json (refreshToken, and optionally a
- * still-valid accessToken + expiresAt) or HEVY_REFRESH_TOKEN. Providing a fresh
- * accessToken lets you test reads without rotating — and logging out — the app.
+ * Load auth. Preferred mode: stable saved-account credentials (userId + secret)
+ * that never expire. Fallback: rotating refresh token from a prior capture.
+ *
+ * Priority order:
+ *  1. HEVY_USER_ID + HEVY_SECRET env vars  (saved-account, persistent)
+ *  2. examples/.hevy-token.json { userId, secret }  (saved-account, persistent)
+ *  3. HEVY_REFRESH_TOKEN env var  (rotating token, expires)
+ *  4. examples/.hevy-token.json { refreshToken / accessToken }  (rotating)
  */
 function loadAuth() {
-  // Env var wins, so exporting a fresh token overrides any stale persisted file.
-  if (process.env.HEVY_REFRESH_TOKEN) return { refreshToken: process.env.HEVY_REFRESH_TOKEN };
+  if (process.env.HEVY_USER_ID && process.env.HEVY_SECRET) {
+    return { savedAccount: { userId: process.env.HEVY_USER_ID, secret: process.env.HEVY_SECRET } };
+  }
   if (existsSync(TOKEN_FILE)) {
     try {
       const t = JSON.parse(readFileSync(TOKEN_FILE, "utf8"));
+      if (t.userId && t.secret) return { savedAccount: { userId: t.userId, secret: t.secret } };
       if (t.refreshToken || t.accessToken) return t;
     } catch (e) {
       console.error(`Failed to read ${TOKEN_FILE}: ${e.message}`);
     }
   }
+  if (process.env.HEVY_REFRESH_TOKEN) return { refreshToken: process.env.HEVY_REFRESH_TOKEN };
   console.error(
-    "No token found.\n" +
-      "Set HEVY_REFRESH_TOKEN, or write examples/.hevy-token.json:\n" +
-      '  { "refreshToken": "...", "accessToken": "...", "expiresAt": 0 }\n' +
-      "Get one with: node capture/extract-token.mjs",
+    "No credentials found.\n" +
+      "Preferred: write examples/.hevy-token.json with { userId, secret } for persistent login.\n" +
+      "Fallback:  set HEVY_REFRESH_TOKEN or add { refreshToken } to that file.\n" +
+      "Run: node capture/use-latest-token.mjs  to populate from a fresh capture.",
   );
   process.exit(1);
 }
 
 const auth = loadAuth();
 const client = new HevyClient({
-  // refreshToken is required by the client; fall back to the access token if
-  // only that was captured (refresh just won't be available).
-  refreshToken: auth.refreshToken ?? auth.accessToken,
+  savedAccount: auth.savedAccount,
+  refreshToken: auth.refreshToken,
   accessToken: auth.accessToken,
   expiresAt: auth.expiresAt,
-  onTokensRefreshed: (state) =>
-    writeFileSync(
-      TOKEN_FILE,
-      JSON.stringify({ refreshToken: state.refreshToken }, null, 2),
-    ),
+  onTokensRefreshed: (state) => {
+    try {
+      const existing = existsSync(TOKEN_FILE) ? JSON.parse(readFileSync(TOKEN_FILE, "utf8")) : {};
+      writeFileSync(TOKEN_FILE, JSON.stringify({ ...existing, refreshToken: state.refreshToken, accessToken: state.accessToken, expiresAt: state.expiresAt }, null, 2));
+    } catch { /* non-fatal */ }
+  },
 });
 
 /**

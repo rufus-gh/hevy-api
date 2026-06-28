@@ -1,5 +1,5 @@
 import { HttpClient } from "./http.js";
-import { HevyAuth, type AuthState } from "./auth.js";
+import { HevyAuth, type AuthState, type SavedAccountCredentials } from "./auth.js";
 import type { CatalogEntry } from "./match.js";
 import {
   API_KEY,
@@ -25,14 +25,21 @@ import type {
 
 export interface HevyClientOptions {
   /**
-   * Refresh token captured from the Hevy app (sent in POST /auth/refresh_token).
-   * The client exchanges it for short-lived access tokens automatically.
+   * Stable saved-account credentials (userId + secret from the iOS keychain).
+   * Unlike the refresh token, the secret never rotates, so the client stays
+   * logged in indefinitely. Takes precedence over `refreshToken` when set.
    */
-  refreshToken: string;
+  savedAccount?: SavedAccountCredentials;
+  /**
+   * Rotating refresh token captured from the Hevy app. Exchanges for
+   * short-lived access tokens automatically. Not needed when `savedAccount` is
+   * provided.
+   */
+  refreshToken?: string;
   /** Optional access token + expiry (epoch ms) to skip the first refresh call. */
   accessToken?: string;
   expiresAt?: number;
-  /** Persist rotated tokens — the refresh token changes on every refresh. */
+  /** Called whenever tokens are minted — use to persist the latest state. */
   onTokensRefreshed?: (state: AuthState) => void;
 
   /** Override the API base URL. */
@@ -56,13 +63,16 @@ export class HevyClient {
   readonly auth: HevyAuth;
 
   constructor(opts: HevyClientOptions) {
-    if (!opts.refreshToken) {
-      throw new Error("HevyClient requires a refreshToken captured from the app.");
+    if (!opts.savedAccount && !opts.refreshToken && !opts.accessToken) {
+      throw new Error(
+        "HevyClient requires either savedAccount (persistent) or refreshToken/accessToken captured from the app.",
+      );
     }
     const baseUrl = opts.baseUrl ?? BASE_URL;
     const fetchImpl = opts.fetch ?? globalThis.fetch;
 
     this.auth = new HevyAuth({
+      savedAccount: opts.savedAccount,
       refreshToken: opts.refreshToken,
       accessToken: opts.accessToken,
       expiresAt: opts.expiresAt,
