@@ -1,5 +1,6 @@
 import { HttpClient } from "./http.js";
 import { HevyAuth, type AuthState } from "./auth.js";
+import type { CatalogEntry } from "./match.js";
 import {
   API_KEY,
   BASE_URL,
@@ -125,6 +126,63 @@ export class HevyClient {
     return this.http.post<{ id: string }>("/custom_exercise_template", {
       exercise: { other_muscles: [], ...input },
     });
+  }
+
+  /**
+   * Build a catalog of exercise templates the user already has access to,
+   * deduped by `exercise_template_id`: their custom exercises plus every
+   * exercise referenced in their routines and recent workout history. This is
+   * the set to match against before creating a new custom exercise.
+   *
+   * @param opts.maxWorkouts How many recent workouts to scan (default 100).
+   */
+  async getExerciseCatalog(opts: { maxWorkouts?: number } = {}): Promise<CatalogEntry[]> {
+    const byId = new Map<string, CatalogEntry>();
+    const add = (e: Partial<CatalogEntry> & { exercise_template_id?: string; title?: string }) => {
+      if (!e.exercise_template_id || !e.title) return;
+      if (!byId.has(e.exercise_template_id)) {
+        byId.set(e.exercise_template_id, {
+          exercise_template_id: e.exercise_template_id,
+          title: e.title,
+          muscle_group: e.muscle_group,
+          equipment_category: e.equipment_category,
+          is_custom: e.is_custom ?? false,
+        });
+      }
+    };
+
+    const [custom, routines] = await Promise.all([
+      this.getCustomExercises().catch(() => [] as ExerciseTemplate[]),
+      this.getRoutines().catch(() => [] as Routine[]),
+    ]);
+    // Custom exercises key their id as `id`, not `exercise_template_id`.
+    for (const c of custom)
+      add({
+        exercise_template_id: c.id,
+        title: c.title,
+        muscle_group: c.muscle_group,
+        equipment_category: c.equipment_category,
+        is_custom: true,
+      });
+    for (const r of routines) for (const e of r.exercises ?? []) add(e);
+
+    // Walk workout history pages until exhausted or the cap is reached.
+    // Hevy rejects large page sizes (400), so keep it small.
+    const maxWorkouts = opts.maxWorkouts ?? 100;
+    const pageSize = 10;
+    for (let offset = 0; offset < maxWorkouts; offset += pageSize) {
+      let page;
+      try {
+        page = await this.getUserWorkouts({ limit: pageSize, offset });
+      } catch {
+        break;
+      }
+      const workouts = page.workouts ?? [];
+      for (const w of workouts) for (const e of w.exercises ?? []) add(e);
+      if (workouts.length < pageSize) break;
+    }
+
+    return [...byId.values()];
   }
 
   // ---- Workouts ----

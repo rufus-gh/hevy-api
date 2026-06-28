@@ -101,6 +101,74 @@ and (opt-in, guarded) create/delete exercises and routines. The rotating refresh
 token is persisted back to `examples/.hevy-token.json` so repeated runs keep
 working. Option **15** runs all read-only checks in one go.
 
+## MCP server — "design a plan and add it to Hevy"
+
+[`mcp/server.mjs`](mcp/server.mjs) is a [Model Context Protocol](https://modelcontextprotocol.io)
+server so you can message Claude (Desktop / Code) to design a workout plan and
+push it straight into Hevy. **It prioritises exercises you already have over
+creating new ones**: each planned exercise is fuzzy-matched against a catalog
+built from your custom exercises + routines + workout history, and a new custom
+exercise is created only when nothing matches (and only with a valid
+muscle group + equipment).
+
+### Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `get_profile` | Account + workout count, for context |
+| `list_exercises` | List/search the exercises you already have |
+| `list_routines` | Your existing routines |
+| `create_routine` | Save a plan as a routine, matching existing exercises first |
+| `delete_routine` | Delete a routine (e.g. undo) |
+| `refresh_catalog` | Rebuild the cached exercise catalog |
+
+### Setup
+
+Build once (`npm run build`) and make a refresh token available (see
+[Authentication](#authentication)). Then register it.
+
+**Claude Code:**
+
+```bash
+claude mcp add hevy -- node /absolute/path/to/hevy-api/mcp/server.mjs
+# token via env, or a file:
+#   HEVY_REFRESH_TOKEN=...   or   HEVY_TOKEN_FILE=/path/to/token.json
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "hevy": {
+      "command": "node",
+      "args": ["/absolute/path/to/hevy-api/mcp/server.mjs"],
+      "env": { "HEVY_REFRESH_TOKEN": "<your refresh token>" }
+    }
+  }
+}
+```
+
+Rotated tokens are persisted to `HEVY_TOKEN_FILE` (default `~/.hevy-mcp/token.json`).
+
+### Example conversation
+
+> "Make me a 3-day upper/lower push split, ~45 min each, and add them to Hevy."
+
+Claude designs the plan, calls `list_exercises` to see what you have, then
+`create_routine` per day. The response reports each exercise as `matched`
+(existing) or `create` (new), e.g.:
+
+```json
+{
+  "summary": "Created routine \"Upper A\" with 5 exercises (4 existing, 1 new).",
+  "exercises": [
+    { "requested": "Barbell Bench Press", "status": "matched", "resolved_to": "Bench Press (Barbell)", "match_score": 1 },
+    { "requested": "Single-Arm Cable Y-Raise", "status": "create", "template_id": "..." }
+  ]
+}
+```
+
 ## Implemented endpoints
 
 | Method | Description | Endpoint |
@@ -108,6 +176,7 @@ working. Option **15** runs all read-only checks in one go.
 | `getAccount()` | Authenticated user account | `GET /user/account` |
 | `getUserPreferences()` | App preferences | `GET /user_preferences` |
 | `getCustomExercises()` | Your custom exercise templates | `GET /custom_exercise_templates` |
+| `getExerciseCatalog()` | Dedup'd exercises from custom + routines + history | (composite) |
 | `getExerciseTemplateUnits()` | Per-exercise weight units | `GET /exercise_template_units` |
 | `createCustomExercise(input)` | Create a custom exercise | `POST /custom_exercise_template` |
 | `getUserWorkouts({username,limit,offset})` | A user's workouts (defaults to you) | `GET /user_workouts_paged` |
