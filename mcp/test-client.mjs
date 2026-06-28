@@ -34,8 +34,18 @@ async function tool(name, args = {}) {
 const tools = await client.listTools();
 console.log("TOOLS:", tools.tools.map((t) => t.name).join(", "));
 
+// Read-only tools
 await tool("get_profile");
+await tool("get_preferences");
 await tool("list_exercises", { query: "bench", limit: 5 });
+await tool("list_workouts", { limit: 3 });
+const workouts = await tool("list_workouts", { limit: 1 });
+if (workouts?.workouts?.[0]?.id) await tool("get_workout", { id: workouts.workouts[0].id });
+await tool("get_feed");
+await tool("list_routine_folders");
+const routines = await tool("list_routines");
+if (routines?.routines?.[0]?.id) await tool("get_routine", { id: routines.routines[0].id });
+await tool("search_routines", { query: "a", match_exercises: true });
 
 const plan = await tool("create_routine", {
   title: "MCP Test Plan (safe to delete)",
