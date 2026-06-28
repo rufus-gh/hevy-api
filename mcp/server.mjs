@@ -72,9 +72,12 @@ const client = new HevyClient({
 });
 
 // ---- Exercise catalog (cached for the process lifetime) ----
+// Seeded with Hevy's full bundled default library (~140 exercises) plus the
+// user's custom exercises, routines and history. `includeFeed` additionally
+// mines the social feed for defaults the user has never used themselves.
 let catalogCache = null;
-async function catalog(force = false) {
-  if (!catalogCache || force) catalogCache = await client.getExerciseCatalog();
+async function catalog({ force = false, includeFeed = false } = {}) {
+  if (!catalogCache || force) catalogCache = await client.getExerciseCatalog({ includeFeed });
   return catalogCache;
 }
 
@@ -83,10 +86,11 @@ const server = new McpServer(
   { name: "hevy", version: "0.1.0" },
   {
     instructions:
-      "Tools for designing workouts and saving them to Hevy. To add a plan, call " +
-      "create_routine with a list of exercises by name; the server matches each " +
-      "name to an exercise you already use before creating a new custom one. Use " +
-      "list_exercises first if you want to see/choose exact existing exercises.",
+      "Tools for designing workouts and saving them to Hevy. list_exercises returns " +
+      "Hevy's full built-in exercise library (~140 default exercises) plus your custom " +
+      "ones — use it to browse or pick exact exercises. To add a plan, call create_routine " +
+      "with a list of exercises by name; the server matches each name against that whole " +
+      "library before creating a new custom exercise, so existing exercises are reused.",
   },
 );
 
@@ -157,18 +161,21 @@ server.registerTool(
 server.registerTool(
   "list_exercises",
   {
-    title: "List/search existing exercises",
+    title: "List/search all Hevy exercises",
     description:
-      "List the exercises the user already has access to (custom + from their routines and workout history), " +
-      "optionally filtered by a search query. Use this to pick exact existing exercises before creating a routine.",
+      "List exercises from Hevy's full built-in library (~140 default exercises) plus the user's custom ones " +
+      "and any seen in their routines/history, optionally filtered by a search query. Use this to browse what " +
+      "exists or pick exact exercises before creating a routine. Set include_feed to also surface defaults " +
+      "harvested from the social feed.",
     inputSchema: {
       query: z.string().optional().describe("Case-insensitive fuzzy filter on the exercise name."),
-      limit: z.number().int().optional().describe("Max results (default 50)."),
+      limit: z.number().int().optional().describe("Max results (default 50; use a high number to see everything)."),
+      include_feed: z.boolean().optional().describe("Also mine the social feed for extra default exercises (slower)."),
     },
   },
-  async ({ query, limit }) => {
+  async ({ query, limit, include_feed }) => {
     try {
-      const all = await catalog();
+      const all = await catalog({ includeFeed: include_feed, force: include_feed });
       let entries = all;
       if (query && query.trim()) {
         const best = findBestMatch(query, all, 0.3);
@@ -176,10 +183,14 @@ server.registerTool(
         entries = all
           .filter((e) => e.title.toLowerCase().includes(q) || (best && e.exercise_template_id === best.entry.exercise_template_id))
           .sort((a, b) => a.title.localeCompare(b.title));
+      } else {
+        entries = [...all].sort((a, b) => a.title.localeCompare(b.title));
       }
       return ok({
         count: entries.length,
         total_in_catalog: all.length,
+        custom_count: all.filter((e) => e.is_custom).length,
+        default_count: all.filter((e) => !e.is_custom).length,
         exercises: entries.slice(0, limit ?? 50).map((e) => ({
           id: e.exercise_template_id,
           title: e.title,
@@ -337,7 +348,7 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const c = await catalog(true);
+    const c = await catalog({ force: true });
     return ok({ refreshed: true, exercise_count: c.length });
   },
 );
