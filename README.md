@@ -105,6 +105,19 @@ exercises and routines. Results render as syntax-highlighted JSON. The rotating
 refresh token is persisted back to `examples/.hevy-token.json` so repeated runs
 keep working.
 
+To verify everything end-to-end against the live API, start the server and run
+the smoke test (it hits every endpoint and does a create→delete write cycle that
+cleans up after itself):
+
+```bash
+npm run example          # terminal 1
+npm run example:smoke    # terminal 2
+```
+
+> `capture/use-latest-token.mjs` writes the freshest token from your capture into
+> `examples/.hevy-token.json`, preferring a still-valid access token so testing
+> reads doesn't rotate (and log out) your app session.
+
 ## Implemented endpoints
 
 | Method | Description | Endpoint |
