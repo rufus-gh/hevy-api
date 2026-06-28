@@ -20,7 +20,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "example": "npm run build && node examples/cli.mjs"
   },
   "keywords": [
     "hevy",
